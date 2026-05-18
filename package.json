@@ -7,6 +7,8 @@
   "scripts": {
     "start": "node server.js",
     "server": "node server.js",
+    "brief": "node scripts/daily-briefing.js",
+    "brief:dry": "node scripts/daily-briefing.js --dry-run --force",
     "bot": "node bot.js",
     "tax-summary": "node bot.js --tax-summary",
     "test:webhook": "node scripts/test-webhook.js"
