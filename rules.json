@@ -1,50 +1,218 @@
 {
-  "watchlist": ["BTCUSDT"],
-  "default_timeframe": "1m",
+  "watchlist": ["NAS100", "NQ1!"],
+  "default_timeframe": "10",
+  "paper_trading": true,
+  "sell_only": false,
 
   "strategy": {
-    "name": "VWAP + RSI(3) + EMA(8) Scalping Strategy",
-    "sources": ["Lewis Jackson"],
-    "description": "Three indicators, each doing a different job. EMA(8) for trend direction, VWAP for session bias, RSI(3) for entry timing. All three must align before a trade fires."
+    "name": "Hybrid AI — Supercator Edition",
+    "version": "1.0.0",
+    "asset_class": "Index futures / CFDs (NQ, NAS100). Also works on crypto + FX with adjusted timeframes.",
+    "sources": [
+      "Hybrid AI indicator (Pine v5) — original chart indicator with Ichimoku + ADX + Kangaroo Tails + Fibonacci TPs",
+      "Optimized Auto Hybrid AI strategy (Pine v5) — execution variant with SMA trend filter, ATR trailing stop, break-even logic, equity protection. Tuned for 10-minute on NQ/NAS100.",
+      "Hybrid AI — Supercator Edition (Pine v6) — confluence scoring 0–100 with A+/A/B grades, Kumo/Kijun/ATR SL modes, Fib or R:R TPs, MTF confirmation, JSON webhook alerts"
+    ],
+    "description": "Ichimoku Cloud (Tenkan / Kijun / Senkou A & B / Chikou) + ADX/DMI trend strength + higher-timeframe confirmation + volume filter + optional pin bar. Every signal is scored 0–100 across nine factors and graded A+/A/B. Hard rules required to fire; the confluence score raises conviction. Best on 10-minute timeframe for NQ/NAS100.",
+    "preferred_timeframes": ["10", "15", "60"],
+    "preferred_session": "RTH (US cash session) — 09:30–16:00 ET. Avoid lunch chop (12:00–13:30) and the first 5 minutes after open."
   },
 
   "indicators": {
-    "ema_8": "Trend direction. Price above EMA(8) = bullish momentum. Below = bearish.",
-    "vwap": "Session bias. Price above VWAP = buyers in control. Below = sellers. Resets at midnight UTC.",
-    "rsi_3": "Entry timing. RSI on 3 candles only — extremely sensitive. Below 30 in an uptrend = snap-back setup. Above 70 in a downtrend = reversal likely."
+    "ichimoku": {
+      "conversion_tenkan": 9,
+      "base_kijun": 26,
+      "leading_span_b": 52,
+      "displacement": 26,
+      "components": {
+        "tenkan_sen": "Short-term momentum (9-period midpoint). Fast-moving line.",
+        "kijun_sen": "Medium-term baseline (26-period midpoint). Acts as dynamic support/resistance.",
+        "senkou_span_a": "Avg of Tenkan & Kijun, plotted 26 bars ahead. Leading edge of the cloud.",
+        "senkou_span_b": "52-period midpoint, plotted 26 bars ahead. Slower cloud edge.",
+        "kumo": "The cloud — area between Span A and Span B. Green when A > B (bullish), red when A < B (bearish).",
+        "chikou_span": "Current close plotted 26 bars back. Confirms trend vs past price.",
+        "kumo_thickness": "Senkou A − Senkou B. Thin Kumo (< 30% of 50-bar avg thickness) signals weak conviction."
+      }
+    },
+    "adx": {
+      "length": 14,
+      "min_strength": 20,
+      "strong_zone": 30,
+      "description": "ADX measures trend strength regardless of direction. Above 20 = trending, above 30 = strong trend. DI+ vs DI- determines direction."
+    },
+    "atr": {
+      "length": 14,
+      "uses": ["SL buffer", "R-multiple sizing", "Trailing stop distance", "Pin bar detection"]
+    },
+    "mtf": {
+      "higher_timeframe": "60",
+      "method": "Compare current 60m close to 60m Kijun-sen. Used to confirm signal direction.",
+      "lookahead_off": true
+    },
+    "volume_filter": {
+      "ma_length": 20,
+      "min_multiplier": 1.2,
+      "description": "Current bar volume must exceed 1.2× the 20-bar volume SMA. Filters out signals on dead candles."
+    },
+    "pin_bar_kangaroo_tail": {
+      "required_by_default": false,
+      "rules": {
+        "range_to_body_ratio": "> 2",
+        "tail_to_range_ratio": "> 0.6 in the direction of the signal"
+      },
+      "description": "Optional confirmation candle. Bull pin = long lower wick + close near high. Bear pin = long upper wick + close near low. Off by default; flip on to be more selective."
+    },
+    "order_blocks": {
+      "definition": "A confirmed reversal candle where (a) prior candle direction flipped, (b) candle body > 0.5× ATR, (c) price is on the trend side of the Kumo.",
+      "use": "Visual context only — do not fire entries off order blocks alone."
+    }
   },
 
   "bias_criteria": {
-    "bullish": ["Price is above VWAP", "Price is above EMA(8)"],
-    "bearish": ["Price is below VWAP", "Price is below EMA(8)"]
+    "bullish": [
+      "Price closes above Kumo top (Senkou A & B displaced 26 ahead)",
+      "Tenkan-sen > Kijun-sen",
+      "Chikou Span above price from 26 bars ago",
+      "Future Kumo bullish (Senkou A slope > Senkou B slope)",
+      "ADX > 20 with DI+ > DI-",
+      "Higher timeframe (60m): close > 60m Kijun"
+    ],
+    "bearish": [
+      "Price closes below Kumo bottom",
+      "Tenkan-sen < Kijun-sen",
+      "Chikou Span below price from 26 bars ago",
+      "Future Kumo bearish (Senkou A slope < Senkou B slope)",
+      "ADX > 20 with DI- > DI+",
+      "Higher timeframe (60m): close < 60m Kijun"
+    ]
   },
 
   "entry_rules": {
     "long": [
-      "Price is above VWAP — buyers in control for the session",
-      "Price is above EMA(8) — uptrend confirmed",
-      "RSI(3) has dropped below 30 — short-term pullback in an uptrend, snap-back likely"
+      "TRIGGER: Tenkan-sen crosses above Kijun-sen on this bar's confirmed close",
+      "Confluence score ≥ 50 (B grade or higher)",
+      "ADX > 20",
+      "Volume > 1.2× 20-bar SMA (if volume filter on)",
+      "Higher timeframe (60m close > 60m Kijun) bullish",
+      "Pin bar in bull direction (if pin filter on)",
+      "Bar index warmed up: ≥ max(spanB + base, 80)",
+      "barstate.isconfirmed = true (no mid-candle firing)"
     ],
     "short": [
-      "Price is below VWAP — sellers in control",
-      "Price is below EMA(8) — downtrend confirmed",
-      "RSI(3) has spiked above 70 — overbought in a downtrend, reversal likely"
+      "TRIGGER: Tenkan-sen crosses below Kijun-sen on this bar's confirmed close",
+      "Confluence score ≥ 50 (B grade or higher)",
+      "ADX > 20",
+      "Volume > 1.2× 20-bar SMA (if volume filter on)",
+      "Higher timeframe (60m close < 60m Kijun) bearish",
+      "Pin bar in bear direction (if pin filter on)",
+      "Bar index warmed up",
+      "barstate.isconfirmed = true"
     ]
   },
 
-  "exit_rules": [
-    "Exit when RSI(3) crosses back above 50 (for longs) or below 50 (for shorts)",
-    "Hard stop: 0.3% below entry for longs, 0.3% above entry for shorts",
-    "Take profit at next VWAP touch or EMA(8) cross"
-  ],
+  "confluence_score": {
+    "max": 100,
+    "components": [
+      { "name": "Price vs Kumo",        "max_points": 20, "rule": "20 if above (long) / below (short) Kumo, 8 if inside, 0 otherwise" },
+      { "name": "Tenkan/Kijun bias",    "max_points": 15 },
+      { "name": "Chikou confirmation",  "max_points": 12 },
+      { "name": "Future Kumo slope",    "max_points": 10 },
+      { "name": "Kumo thickness (not thin)", "max_points": 8 },
+      { "name": "Volume filter passing",     "max_points": 10 },
+      { "name": "ADX strength",         "max_points": 12, "rule": "12 if ADX > 30, 6 if ADX > min_strength, 0 otherwise" },
+      { "name": "MTF confirmation",     "max_points": 10 },
+      { "name": "Pin bar candle present","max_points": 10 }
+    ],
+    "grades": {
+      "A+": 80,
+      "A":  65,
+      "B":  50
+    },
+    "minimum_to_fire": 50
+  },
+
+  "exit_rules": {
+    "stop_loss": {
+      "modes": ["Kumo Edge", "Kijun", "ATR"],
+      "default": "Kumo Edge",
+      "atr_buffer": 0.5,
+      "validation": "If raw SL ends up on the wrong side of entry (rare in chop), fall back to entry ± 1.5 × ATR",
+      "atr_mode_distance": "2.0 × ATR"
+    },
+    "take_profit": {
+      "mode": "r_multiple",
+      "tp1_r": 1.5,
+      "tp2_r": 2.5,
+      "tp3_r": 4.0,
+      "r_distance_cap": "min(R, 5 × ATR) and max(R, 0.5 × ATR) — prevents absurd targets when SL is unusually tight or wide",
+      "tp_ordering_validation": "Each TP must be ≥ 0.3 ATR away from entry, with ≥ 0.1 ATR spacing between TPs",
+      "alternative_mode": "fibonacci",
+      "fib_lookback_bars": 100,
+      "fib_levels": [0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
+    },
+    "trailing": {
+      "enabled_default": true,
+      "atr_multiplier": 1.0,
+      "break_even_atr_trigger": 1.5,
+      "description": "Once price moves 1.5 × ATR in your favor, move stop to break-even. Then trail by 1.0 × ATR."
+    },
+    "time_stop": {
+      "max_bars_in_trade": 50,
+      "description": "Close any trade that hasn't reached TP1 within 50 bars. Stale = not working."
+    }
+  },
 
   "risk_rules": [
-    "Risk maximum 1% of portfolio per trade",
-    "Maximum trade size capped by MAX_TRADE_SIZE_USD in .env",
-    "Maximum trades per day capped by MAX_TRADES_PER_DAY in .env",
-    "Do not trade if price is more than 1.5% away from VWAP — overextended",
-    "Paper trade first — validate this strategy on your specific asset before going live"
+    "Risk 0.25%–1% of equity per trade (default 0.5%)",
+    "Equity protection: hard close any open trade whose unrealized drawdown exceeds MAX_LOSS_PERCENT (default 1%) of equity",
+    "MAX_TRADE_SIZE_USD cap from .env",
+    "MAX_TRADES_PER_DAY cap from .env (default 3)",
+    "No new entries 15 min before market close",
+    "No new entries during major scheduled news (FOMC, CPI, NFP) — skip ±10 min around release",
+    "Paper trade for 30+ confirmed signals before flipping live"
   ],
 
-  "notes": "Scalping strategy — designed for 1m to 5m timeframes. RSI(3) is intentionally fast and sensitive. Do not apply to higher timeframes."
+  "alerts": {
+    "on_signal": true,
+    "on_tp1_hit": true,
+    "on_tp2_hit": true,
+    "on_tp3_hit": true,
+    "on_sl_hit": true,
+    "channels": ["email", "webhook"],
+    "email_to": "suessvilliano@gmail.com",
+    "webhook_format_json": true,
+    "webhook_payload_template": {
+      "action": "buy|sell",
+      "grade": "A+|A|B",
+      "ticker": "{{ticker}}",
+      "tf": "{{timeframe}}",
+      "price": "{{price}}",
+      "score": "{{score}}",
+      "sl": "{{sl}}",
+      "tp1": "{{tp1}}",
+      "tp2": "{{tp2}}",
+      "tp3": "{{tp3}}",
+      "atr": "{{atr}}",
+      "adx": "{{adx}}",
+      "mtf_bias": "{{mtf}}",
+      "timestamp_iso": "{{time}}"
+    }
+  },
+
+  "daily_briefing": {
+    "enabled": true,
+    "run_at_local": "08:00",
+    "timezone": "America/New_York",
+    "deliver_to": ["email"],
+    "covers": [
+      "Trading bias for NQ / NAS100 today (long, short, neutral) with rationale",
+      "Key support and resistance levels (overnight high/low, prior day high/low, daily pivots, ES gap zones)",
+      "Top financial news affecting US indices (Fed speakers, mega-cap earnings, geopolitics, China, energy)",
+      "Economic data calendar today with release times in ET (CPI, PPI, NFP, FOMC, retail sales, ISM, jobless claims, etc.)",
+      "Market sentiment edge: VIX level + change, breadth (advancers vs decliners), put/call ratio, fear & greed, DXY, 10y yield, AAII, NAAIM"
+    ],
+    "prompt_file": "prompts/hybrid-ai-one-shot.md"
+  },
+
+  "notes": "10-minute is the optimal timeframe for the Optimized Auto Hybrid AI executor on NQ/NAS100. The Hybrid AI base indicator can be viewed on multiple TFs in parallel for context. The Supercator Edition's confluence scoring + SL/TP engine is the source of truth for grading. Do NOT apply this strategy to <5m timeframes — the indicators noise out and ADX whipsaws."
 }
